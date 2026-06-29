@@ -124,6 +124,7 @@ router.post('/from-selection', auth, roleCheck(['admin','user']), async (req, re
       await Audio.updateMany({ _id: { $in: validAudioIds } }, { $addToSet: { albumIds: newAlbum._id } });
     }
     await Album.updateMany({ _id: { $ne: newAlbum._id }, audioIds: { $in: validAudioIds } }, { $pull: { audioIds: { $in: validAudioIds } } });
+    res.status(201).json(newAlbum);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
