@@ -65,7 +65,8 @@ app.use('/api/gallery', galleryRoutes);
 
 // SPA catch-all for production build: serve index.html for any non-API, non-upload GET routes.
 // This ensures browser refresh and direct access work on all frontend routes.
-app.get('/*', (req, res) => {
+app.use((req, res, next) => {
+  if (req.method !== 'GET') return next();
   if (req.path.startsWith('/api/') || req.path.startsWith('/uploads/')) {
     return res.status(404).json({ message: 'Not found' });
   }
@@ -79,7 +80,13 @@ app.get('/*', (req, res) => {
 
 // Database Connection & default admin seed
 const User = require('./models/User');
-mongoose.connect(process.env.MONGODB_URI)
+const mongoUri = process.env.MONGODB_URI;
+if (!mongoUri) {
+  console.error('Missing MONGODB_URI environment variable. Please set it in gitupload/backend/.env or in your Render service settings.');
+  process.exit(1);
+}
+
+mongoose.connect(mongoUri)
   .then(async () => {
     console.log('Connected to MongoDB');
     const adminExists = await User.findOne({ username: 'shantikunjadmin' });
