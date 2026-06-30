@@ -65,7 +65,7 @@ app.use('/api/gallery', galleryRoutes);
 
 // SPA catch-all for production build: serve index.html for any non-API, non-upload GET routes.
 // This ensures browser refresh and direct access work on all frontend routes.
-app.get('*', (req, res) => {
+app.get('/*', (req, res) => {
   if (req.path.startsWith('/api/') || req.path.startsWith('/uploads/')) {
     return res.status(404).json({ message: 'Not found' });
   }
