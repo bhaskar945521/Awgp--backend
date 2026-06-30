@@ -8,9 +8,14 @@ module.exports = function roleCheck(allowedRoles) {
     if (!req.user) {
       return res.status(401).json({ message: 'Unauthenticated' });
     }
-    const userRole = req.user.role;
-    // Allow exact matches OR treat any role containing "user" as a user role when 'user' is allowed
-    const isAllowed = allowedRoles.some(ar => userRole && userRole.toLowerCase().includes(ar.toLowerCase()));
+    const userRole = (req.user.role || '').toLowerCase();
+    const normalizedAllowed = allowedRoles.map(ar => ar.toLowerCase());
+    const isAllowed = normalizedAllowed.some(ar => {
+      if (ar === 'admin') {
+        return userRole === 'admin' || userRole.includes('admin');
+      }
+      return userRole === ar;
+    });
     if (!isAllowed) {
       return res.status(403).json({ message: 'Insufficient permissions' });
     }

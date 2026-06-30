@@ -43,8 +43,8 @@ router.get('/', (req, res) => {
   });
 });
 
-// POST /api/gallery/upload – upload new images (admin or user allowed)
-router.post('/upload', auth, roleCheck(['admin', 'user']), upload.array('images'), (req, res) => {
+// POST /api/gallery/upload – upload new images (admin, user, or onlyuser allowed)
+router.post('/upload', auth, roleCheck(['admin', 'user', 'onlyuser']), upload.array('images'), (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ message: 'No images uploaded' });

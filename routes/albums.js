@@ -42,8 +42,8 @@ function parseArrayField(field) {
     }
   });
 
-  // CREATE new album (admin only)
-  router.post('/', auth, roleCheck(['admin','user']), async (req, res) => {
+  // CREATE new album
+  router.post('/', auth, roleCheck(['admin','user','onlyuser']), async (req, res) => {
     try {
       const { name, title, description, coverImage, categoryId, audioIds } = req.body;
     const newAlbum = new Album({ name, title, description, coverImage, categoryId, audioIds });
@@ -55,8 +55,8 @@ function parseArrayField(field) {
     }
   });
 
-  // UPDATE album (admin only)
-  router.put('/:id', auth, roleCheck(['admin','user']), async (req, res) => {
+  // UPDATE album
+  router.put('/:id', auth, roleCheck(['admin','user','onlyuser']), async (req, res) => {
     try {
       const { name, title, description, coverImage, categoryId, audioIds } = req.body;
     const album = await Album.findById(req.params.id);
@@ -75,8 +75,8 @@ function parseArrayField(field) {
     }
   });
 
-// DELETE album (admin only)
-router.delete('/:id', auth, roleCheck(['admin']), async (req, res) => {
+// DELETE album
+router.delete('/:id', auth, roleCheck(['admin','user','onlyuser']), async (req, res) => {
   try {
     const album = await Album.findByIdAndDelete(req.params.id);
     if (!album) return res.status(404).json({ message: 'Album not found' });
@@ -94,7 +94,7 @@ router.delete('/:id', auth, roleCheck(['admin']), async (req, res) => {
   }
 });
 // New endpoint: Create Album from selected Audios (existing)
-router.post('/from-selection', auth, roleCheck(['admin','user']), async (req, res) => {
+router.post('/from-selection', auth, roleCheck(['admin','user','onlyuser']), async (req, res) => {
   try {
     const { albumName, title, description, coverImage, categoryId, audioIds } = req.body;
     if (!albumName || !categoryId) {
@@ -132,7 +132,7 @@ router.post('/from-selection', auth, roleCheck(['admin','user']), async (req, re
 });
 
 // New endpoint: Create Album from selected Audios with optional audio edits
-router.post('/from-selection-with-edits', auth, roleCheck(['admin','user']), async (req, res) => {
+router.post('/from-selection-with-edits', auth, roleCheck(['admin','user','onlyuser']), async (req, res) => {
   try {
     const { albumName, title, description, coverImage, categoryId, audioIds, audioUpdates } = req.body;
     if (!albumName || !categoryId) {

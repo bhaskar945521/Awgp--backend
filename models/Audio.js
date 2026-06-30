@@ -46,6 +46,10 @@ const audioSchema = new mongoose.Schema({
     type: String,
     default: 'mp3'
   },
+  originalExtension: {
+    type: String,
+    default: 'mp3'
+  },
   // Optional tags for future search/filtering
   tags: [{ type: String }]
 }, { timestamps: true });

@@ -44,7 +44,7 @@ router.get('/', async (req, res) => {
 });
 
 // POST create new category
-router.post('/', auth, roleCheck(['admin','user']), upload.single('coverImage'), async (req, res) => {
+router.post('/', auth, roleCheck(['admin','user','onlyuser']), upload.single('coverImage'), async (req, res) => {
   try {
     const { name } = req.body;
     const existing = await Category.findOne({ name });
@@ -64,7 +64,7 @@ router.post('/', auth, roleCheck(['admin','user']), upload.single('coverImage'),
 });
 
 // PATCH rename category
-router.patch('/:id', auth, roleCheck(['admin','user']), upload.single('coverImage'), async (req, res) => {
+router.patch('/:id', auth, roleCheck(['admin','user','onlyuser']), upload.single('coverImage'), async (req, res) => {
   try {
     const { name } = req.body;
     const cat = await Category.findById(req.params.id);
@@ -86,7 +86,7 @@ router.patch('/:id', auth, roleCheck(['admin','user']), upload.single('coverImag
 });
 
 // DELETE category
-router.delete('/:id', auth, roleCheck(['admin','user']), async (req, res) => {
+router.delete('/:id', auth, roleCheck(['admin','user','onlyuser']), async (req, res) => {
   try {
     const cat = await Category.findByIdAndDelete(req.params.id);
     if (!cat) return res.status(404).json({ message: 'Category not found' });

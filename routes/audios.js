@@ -4,6 +4,8 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const multer = require('multer');
+const ffmpegPath = require('ffmpeg-static');
+const ffmpeg = require('fluent-ffmpeg');
 const mongoose = require('mongoose');
 const Audio = require('../models/Audio');
 const Album = require('../models/Album'); // added for duplicate info
@@ -42,6 +44,33 @@ function parseArrayField(field) {
   return [field];
 }
 
+if (ffmpegPath) {
+  ffmpeg.setFfmpegPath(ffmpegPath);
+} else {
+  console.warn('[AudioRoute] ffmpeg-static binary not found; audio conversion will be unavailable.');
+}
+
+function convertAudioToMp3(inputPath, outputPath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .outputOptions(['-y'])
+      .audioCodec('libmp3lame')
+      .audioBitrate('128k')
+      .format('mp3')
+      .on('end', () => resolve(outputPath))
+      .on('error', err => reject(err))
+      .save(outputPath);
+  });
+}
+
+function cleanupFiles(paths = []) {
+  paths.forEach(filePath => {
+    if (filePath && fs.existsSync(filePath)) {
+      try { fs.unlinkSync(filePath); } catch (e) { console.warn('[AudioUpload] cleanup failed', filePath, e.message); }
+    }
+  });
+}
+
 // Middleware to reject any legacy category fields
 function rejectCategoryFields(req, res, next) {
   if (req.body.category || req.body.categoryIds) {
@@ -53,11 +82,14 @@ function rejectCategoryFields(req, res, next) {
 // GET /api/audios – advanced search with pagination & sorting
 router.get('/', async (req, res) => {
   try {
-    const { page, limit, sort = '-createdAt', album } = req.query;
+    const { page, limit, sort = '-createdAt', album, extension } = req.query;
     const filters = {};
     if (album) {
       // Filter audios that belong to the specified album ID
       filters.albumIds = { $in: [album] };
+    }
+    if (extension) {
+      filters.originalExtension = extension.toLowerCase();
     }
     const sortObj = {};
     const direction = sort.startsWith('-') ? -1 : 1;
@@ -117,7 +149,7 @@ router.get('/:id', async (req, res) => {
 router.post(
   '/',
   auth,
-  roleCheck(['admin', 'user']),
+  roleCheck(['admin', 'user', 'onlyuser']),
   upload.fields([
     { name: 'audioFile', maxCount: 1 },
     { name: 'imageFile', maxCount: 1 }
@@ -130,18 +162,40 @@ router.post(
       const imageFile = req.files?.imageFile?.[0];
       if (!audioFile) return res.status(400).json({ message: 'No audio file uploaded.' });
 
+      // Convert audio to MP3 for maximum mobile compatibility
+      let processedAudioPath = audioFile.path;
+      let processedFilename = audioFile.filename;
+      const originalExt = path.extname(audioFile.originalname).replace('.', '').toLowerCase() || 'mp3';
+      if (originalExt !== 'mp3') {
+        if (!ffmpegPath) {
+          if (fs.existsSync(audioFile.path)) fs.unlinkSync(audioFile.path);
+          return res.status(500).json({ message: 'Audio conversion is not available on the server.' });
+        }
+
+        const baseName = path.basename(audioFile.filename, path.extname(audioFile.filename));
+        processedFilename = `${baseName}.mp3`;
+        const processedPath = path.join(path.dirname(audioFile.path), processedFilename);
+
+        try {
+          await convertAudioToMp3(audioFile.path, processedPath);
+          if (fs.existsSync(audioFile.path)) fs.unlinkSync(audioFile.path);
+          processedAudioPath = processedPath;
+        } catch (convertErr) {
+          if (fs.existsSync(audioFile.path)) fs.unlinkSync(audioFile.path);
+          if (imageFile && fs.existsSync(imageFile.path)) fs.unlinkSync(imageFile.path);
+          console.error('[AudioUpload] Conversion failed:', convertErr);
+          return res.status(400).json({ message: 'Failed to convert audio to mobile-friendly format. Please upload a supported audio file.' });
+        }
+      }
+
       // Duplicate detection via hash
-      const fileData = await fs.promises.readFile(audioFile.path);
+      const fileData = await fs.promises.readFile(processedAudioPath);
       const hash = crypto.createHash('sha256').update(fileData).digest('hex');
 
-            // Duplicate detection via hash
       const existing = await Audio.findOne({ fileHash: hash }).populate('albumIds');
       if (existing) {
-        // Clean up uploaded files
-        fs.unlinkSync(audioFile.path);
-        if (imageFile) fs.unlinkSync(imageFile.path);
+        cleanupFiles([processedAudioPath, audioFile.path, imageFile?.path]);
         const albumIds = existing.albumIds ? existing.albumIds.map(a => a._id) : [];
-        const Album = require('../models/Album');
         const albums = await Album.find({ _id: { $in: albumIds } }).populate('categoryId');
         
         // Deduplicate categories and collect titles
@@ -165,7 +219,7 @@ router.post(
       const resolvedAlbumIds = parseArrayField(albumIds);
       const resolvedTags = parseArrayField(tags);
 
-      const audioUrl = `/uploads/${audioFile.filename}`;
+      const audioUrl = `/uploads/${processedFilename}`;
       let imageUrl = '/placeholder.png';
       if (imageFile) {
         imageUrl = `/uploads/images/${imageFile.filename}`;
@@ -181,7 +235,8 @@ router.post(
         tags: resolvedTags,
         audioUrl,
         fileHash: hash,
-        fileExtension: path.extname(audioFile.originalname).replace('.', '').toLowerCase() || 'mp3'
+        fileExtension: 'mp3',
+        originalExtension: originalExt
       });
       const saved = await newAudio.save();
       res.status(201).json(saved);
@@ -189,15 +244,17 @@ router.post(
       // Cleanup on error
       const audioFile = req.files?.audioFile?.[0];
       const imageFile = req.files?.imageFile?.[0];
-      if (audioFile && fs.existsSync(audioFile.path)) fs.unlinkSync(audioFile.path);
-      if (imageFile && fs.existsSync(imageFile.path)) fs.unlinkSync(imageFile.path);
+      const processedPath = audioFile && path.extname(audioFile.originalname).toLowerCase() !== '.mp3'
+        ? path.join(path.dirname(audioFile.path), `${path.basename(audioFile.filename, path.extname(audioFile.filename))}.mp3`)
+        : audioFile?.path;
+      cleanupFiles([processedPath, audioFile?.path, imageFile?.path]);
       res.status(400).json({ message: err.message });
     }
   }
 );
 
-// PUT /api/audios/:id – update audio details (protected, admin only)
-router.put('/:id', auth, roleCheck(['admin']), rejectCategoryFields, async (req, res) => {
+// PUT /api/audios/:id – update audio details (protected)
+router.put('/:id', auth, roleCheck(['admin','onlyuser']), rejectCategoryFields, async (req, res) => {
   try {
     const { title, speaker, duration, description, albumIds, tags } = req.body;
     const audio = await Audio.findById(req.params.id);
@@ -215,8 +272,8 @@ router.put('/:id', auth, roleCheck(['admin']), rejectCategoryFields, async (req,
   }
 });
 
-// DELETE /api/audios/:id – delete audio track and its file (protected, admin only)
-router.delete('/:id', auth, roleCheck(['admin']), async (req, res) => {
+// DELETE /api/audios/:id – delete audio track and its file (protected)
+router.delete('/:id', auth, roleCheck(['admin','onlyuser']), async (req, res) => {
   try {
     const audio = await Audio.findById(req.params.id);
     if (!audio) return res.status(404).json({ message: 'Audio not found' });
