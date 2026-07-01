@@ -28,7 +28,10 @@ const storage = multer.diskStorage({
     cb(null, uniqueSuffix + path.extname(file.originalname));
   }
 });
-const upload = multer({ storage: storage });
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
+});
 
 // Helper to parse array fields (supports JSON array string, comma-separated string, or array)
 function parseArrayField(field) {
@@ -157,16 +160,49 @@ router.post(
   rejectCategoryFields,
   async (req, res) => {
     try {
+      // Set request timeout to 5 minutes
+      req.setTimeout(300000);
+
       const { title, speaker, duration, tags, albumIds } = req.body;
       const audioFile = req.files?.audioFile?.[0];
       const imageFile = req.files?.imageFile?.[0];
       if (!audioFile) return res.status(400).json({ message: 'No audio file uploaded.' });
 
-      // Convert audio to MP3 for maximum mobile compatibility
+      const originalExt = path.extname(audioFile.originalname).replace('.', '').toLowerCase() || 'mp3';
       let processedAudioPath = audioFile.path;
       let processedFilename = audioFile.filename;
-      const originalExt = path.extname(audioFile.originalname).replace('.', '').toLowerCase() || 'mp3';
-      if (originalExt !== 'mp3') {
+      let hash = '';
+
+      // 1. If it's already an MP3, check duplicates immediately BEFORE format conversion
+      if (originalExt === 'mp3') {
+        const fileData = await fs.promises.readFile(audioFile.path);
+        hash = crypto.createHash('sha256').update(fileData).digest('hex');
+
+        const existing = await Audio.findOne({ fileHash: hash }).populate('albumIds');
+        if (existing) {
+          cleanupFiles([audioFile.path, imageFile?.path]);
+          const albumIdsList = existing.albumIds ? existing.albumIds.map(a => a._id) : [];
+          const albums = await Album.find({ _id: { $in: albumIdsList } }).populate('categoryId');
+          
+          const categoriesMap = {};
+          albums.forEach(al => {
+            if (al.categoryId) {
+              categoriesMap[al.categoryId._id.toString()] = al.categoryId.name;
+            }
+          });
+          const categories = Object.keys(categoriesMap).map(id => ({ _id: id, name: categoriesMap[id] }));
+          const albumDetails = albums.map(al => ({ _id: al._id, title: al.title || al.name }));
+
+          return res.status(409).json({
+            message: 'This audio file already exists in the library.',
+            existingTitle: existing.title,
+            existingId: existing._id,
+            albums: albumDetails,
+            categories
+          });
+        }
+      } else {
+        // Convert audio to MP3 for maximum mobile compatibility
         if (!ffmpegPath) {
           if (fs.existsSync(audioFile.path)) fs.unlinkSync(audioFile.path);
           return res.status(500).json({ message: 'Audio conversion is not available on the server.' });
@@ -186,36 +222,36 @@ router.post(
           console.error('[AudioUpload] Conversion failed:', convertErr);
           return res.status(400).json({ message: 'Failed to convert audio to mobile-friendly format. Please upload a supported audio file.' });
         }
+
+        // Duplicate detection via hash for non-MP3 files
+        const fileData = await fs.promises.readFile(processedAudioPath);
+        hash = crypto.createHash('sha256').update(fileData).digest('hex');
+
+        const existing = await Audio.findOne({ fileHash: hash }).populate('albumIds');
+        if (existing) {
+          cleanupFiles([processedAudioPath, audioFile.path, imageFile?.path]);
+          const albumIdsList = existing.albumIds ? existing.albumIds.map(a => a._id) : [];
+          const albums = await Album.find({ _id: { $in: albumIdsList } }).populate('categoryId');
+          
+          const categoriesMap = {};
+          albums.forEach(al => {
+            if (al.categoryId) {
+              categoriesMap[al.categoryId._id.toString()] = al.categoryId.name;
+            }
+          });
+          const categories = Object.keys(categoriesMap).map(id => ({ _id: id, name: categoriesMap[id] }));
+          const albumDetails = albums.map(al => ({ _id: al._id, title: al.title || al.name }));
+
+          return res.status(409).json({
+            message: 'This audio file already exists in the library.',
+            existingTitle: existing.title,
+            existingId: existing._id,
+            albums: albumDetails,
+            categories
+          });
+        }
       }
 
-      // Duplicate detection via hash
-      const fileData = await fs.promises.readFile(processedAudioPath);
-      const hash = crypto.createHash('sha256').update(fileData).digest('hex');
-
-      const existing = await Audio.findOne({ fileHash: hash }).populate('albumIds');
-      if (existing) {
-        cleanupFiles([processedAudioPath, audioFile.path, imageFile?.path]);
-        const albumIds = existing.albumIds ? existing.albumIds.map(a => a._id) : [];
-        const albums = await Album.find({ _id: { $in: albumIds } }).populate('categoryId');
-        
-        // Deduplicate categories and collect titles
-        const categoriesMap = {};
-        albums.forEach(al => {
-          if (al.categoryId) {
-            categoriesMap[al.categoryId._id.toString()] = al.categoryId.name;
-          }
-        });
-        const categories = Object.keys(categoriesMap).map(id => ({ _id: id, name: categoriesMap[id] }));
-        const albumDetails = albums.map(al => ({ _id: al._id, title: al.title || al.name }));
-
-        return res.status(409).json({
-          message: 'This audio file already exists in the library.',
-          existingTitle: existing.title,
-          existingId: existing._id,
-          albums: albumDetails,
-          categories
-        });
-      }
       const resolvedAlbumIds = parseArrayField(albumIds);
       const resolvedTags = parseArrayField(tags);
 

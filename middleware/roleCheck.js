@@ -10,12 +10,7 @@ module.exports = function roleCheck(allowedRoles) {
     }
     const userRole = (req.user.role || '').toLowerCase();
     const normalizedAllowed = allowedRoles.map(ar => ar.toLowerCase());
-    const isAllowed = normalizedAllowed.some(ar => {
-      if (ar === 'admin') {
-        return userRole === 'admin' || userRole.includes('admin');
-      }
-      return userRole === ar;
-    });
+    const isAllowed = normalizedAllowed.some(ar => userRole === ar);
     if (!isAllowed) {
       return res.status(403).json({ message: 'Insufficient permissions' });
     }
